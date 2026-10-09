@@ -2,11 +2,7 @@
 
 [![Source compatibility](https://github.com/rsklnkff/urp-stable-projection/actions/workflows/source-validation.yml/badge.svg)](https://github.com/rsklnkff/urp-stable-projection/actions/workflows/source-validation.yml)
 
-A URP patch to reduce vertex jitter far from the world origin.
-
-I ran into this while working on **Void Logistics**. Close-up views of ships would wobble as the camera moved, even though their parts had accurate local positions. This package contains the rendering fix, along with an installer and a small demo.
-
-It changes how URP projects vertices, including shadow and motion-vector passes. World coordinates keep their usual meaning, so physics, saves and gameplay code don't need to change. Standard URP shaders and custom shaders that use the shared projection helpers pick up the fix without individual edits.
+At large world coordinates, floating-point rounding causes visible vertex jitter. This patch uses compensated arithmetic in URP's shared projection helpers to preserve local vertex detail, with matching changes to shadows and motion vectors.
 
 ![Conventional projection on the left, patched projection on the right](docs/media/comparison.gif)
 
@@ -68,7 +64,7 @@ Pass the camera's final position, including rig offsets. This component controls
 
 ## Performance and limits
 
-I've tested the original fix in Void Logistics Player builds, including on Steam Deck and a laptop RTX 3050, and haven't noticed a performance difference. It does add vertex arithmetic, so the cost will depend on your game and hardware.
+The patch adds vertex arithmetic. Measure GPU frame times in your own Player builds to check the cost.
 
 This fixes precision lost during projection. It can't recover detail already lost in CPU transforms, world-space particles or batched geometry. Custom shaders doing their own matrix math may need changes. Test your rendering features in a Player build before shipping.
 
