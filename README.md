@@ -2,90 +2,84 @@
 
 [![Source compatibility](https://github.com/rsklnkff/urp-stable-projection/actions/workflows/source-validation.yml/badge.svg)](https://github.com/rsklnkff/urp-stable-projection/actions/workflows/source-validation.yml)
 
-Reduce vertex jitter at large world coordinates while keeping Unity's ordinary world-space and camera-matrix conventions.
+A URP patch to reduce vertex jitter far from the world origin.
 
-This package patches shared Core/URP projection helpers and motion-vector paths. It includes a version-aware installer, restoration of the original packages, an optional precise orthographic camera, a comparison scene generator, and reproducible GPU checks. It originated in **Void Logistics**, where visible mesh distortion far from the origin was the problem being solved.
+I ran into this while working on **Void Logistics**. Close-up views of ships would wobble as the camera moved, even though their parts had accurate local positions. This package contains the rendering fix, along with an installer and a small demo.
 
-**Status:** initial public release, 0.1.0. DX11 and Vulkan have passing numerical checks. **DX12 is currently outside the supported backend scope:** a tested default compiler/device combination fails the precision tolerance. Use the [compatibility and validation table](docs/COMPATIBILITY.md) to distinguish runtime-tested configurations from source-checked adapters.
+It changes how URP projects vertices, including shadow and motion-vector passes. World coordinates keep their usual meaning, so physics, saves and gameplay code don't need to change. Standard URP shaders and custom shaders that use the shared projection helpers pick up the fix without individual edits.
 
-## What it improves
+![Conventional projection on the left, patched projection on the right](docs/media/comparison.gif)
 
-- Local mesh detail survives projection more accurately when objects and cameras are far from the origin.
-- Standard URP shaders and shaders using the patched shared helpers benefit without per-material changes.
-- Matching object and camera motion-vector paths preserve small camera corrections through temporal rendering.
-- The optional orthographic camera component accumulates a local camera rig in doubles, or accepts your game's authoritative double position.
-- Ordinary world positions, camera matrices, UI conventions and physics coordinates keep their meanings.
+The same geometry and camera at coordinates around 240,000 units. Orange uses conventional projection; cyan uses the patched helpers.
 
-It does not repair imprecise physics, simulation, world-space particle data, CPU transforms, or vertex detail already lost before projection. It adds GPU arithmetic; it is not a universal performance improvement or an infinite-world coordinate system.
+## Compatibility
+
+| Unity | URP | Testing |
+|---|---|---|
+| 2022.3 | 14.0.12 | GPU precision, shader compilation, install and restore |
+| 6.0 | 17.0.4 | Source checks only |
+| 6.1 | 17.1.0 | Source checks only |
+| 6.2 | 17.2.0 | GPU precision and shader compilation |
+| 6.3 | 17.3.0 | GPU precision, shader compilation, install/restore and a Windows Player smoke test |
+
+DX11 checks pass on the three runtime-tested versions. Vulkan checks pass on URP 17.2. **DX12 currently fails a precision test and isn't supported.** XR and other graphics backends haven't been validated.
+
+Other patch releases in these URP families may work, but must pass the installer's source checks. Unsupported versions are refused. See [the full results and known limitations](docs/COMPATIBILITY.md).
 
 ## Install
 
-Start with a project that already uses a supported URP version and save/commit your work.
+Your project needs to be using a supported URP version already. Commit or back up your work first.
 
-In Unity's Package Manager, choose **Add package from Git URL** and paste:
+In Package Manager, choose **Add package from Git URL**:
 
 ```text
 https://github.com/rsklnkff/urp-stable-projection.git?path=/Packages/com.voidlogistics.urp-stable-projection#v0.1.0
 ```
 
 1. Open **Tools > Stable Projection > Installer** and click **Check compatibility**.
-2. Click **Install checked patch**, then let package resolution and shader imports finish. Unity may show its normal missing-signature notice for locally modified packages; review it normally.
+2. Click **Install checked patch** and wait for package resolution and shader imports.
 3. Click **Validate installed patch**, then run **Tools > Stable Projection > Run GPU precision validation** in Edit Mode.
 
-A [ZIP download](https://github.com/rsklnkff/urp-stable-projection/releases/tag/v0.1.0) and [disk-install instructions](docs/INSTALLATION.md#package-manager-disk-installation) are also available.
+The installer patches copies of your installed Core and URP packages and packs them into `.tgz` files. There's no need to commit thousands of unpacked Unity source files. Unity may show a missing-signature notice for these modified packages.
 
-The installer creates compressed Core/URP archives from the versions already installed in your project. It uses Package Manager APIs and does not upgrade Unity, hand-edit manifests, overwrite PackageCache, edit your scenes or add loose render-pipeline source directories to your project.
-
-For a shared/CI project, install this helper package from its public Git URL or keep a copy at a stable relative path. A local absolute dependency on your Downloads directory is not portable. See [installation and upgrades](docs/INSTALLATION.md).
-
-## Try the demo
-
-After installing the patch, choose **Tools > Stable Projection > Create comparison demo scene**. The generator asks about unsaved scenes and creates a new folder under `Assets/StableProjectionDemo`; it never overwrites an existing demo.
-
-Press Play. The left grid uses conventional world-space vertex projection; the right grid uses the installed URP helpers. Both have identical local geometry and use the same camera. Toggle camera movement, origin distance and perspective, and adjust zoom. The default coordinate magnitude is 240,000 units. Temporal AA is disabled for the comparison camera so it does not conceal geometry jitter.
-
-![Conventional orange grid and stable cyan grid](docs/media/comparison.gif)
-
-Orange: conventional projection. Cyan: patched shared helpers. These are unretouched 1280x720 renders from the generated demo on DX11, with camera movement sampled at 12 fps and replayed forward/backward. Raster aliasing remains; the comparison concerns geometric distortion.
-
-## Optional precise orthographic camera
-
-Add `PreciseOrthographicCamera` to your orthographic camera. It owns that camera's automatic projection and restores it when disabled. Do not combine it with another component that owns a custom projection matrix.
-
-With a parented camera rig, the component accumulates local transforms in doubles. If your game already has a double-precision camera position, supply it each frame after moving the camera:
-
-```csharp
-preciseCamera.SetPrecisePosition(cameraX, cameraY, cameraZ);
-```
-
-This must be the final **camera** position, including rig offsets. Supplying a target/ship position instead will move the projection incorrectly. The precision of object placement remains your game's responsibility. Perspective cameras receive the shared shader improvements but this optional component does not modify their projection. XR is outside the validated support scope.
-
-## Version compatibility
-
-Adapters exist for **URP 14.0 and 17.0, 17.1, 17.2, 17.3**, covering Unity 2022.3 and Unity 6 releases. Each adapter checks exact source blocks before any active package changes. Different patch releases are accepted only if all required blocks match; unexpected source changes are refused with the affected filename. A matching version number alone is never enough.
-
-Reference source versions: 14.0.12, 17.0.4, 17.1.0, 17.2.0 and 17.3.0. Validation depth is documented per version, graphics API and device in [COMPATIBILITY.md](docs/COMPATIBILITY.md). URP 12/15/16, future 17.x minors, HDRP and the Built-in pipeline are not supported by this release.
-
-## Restore and upgrade
-
-Use **Restore original packages** before upgrading URP, removing this helper package, or installing another render-pipeline fork. It restores the original direct/transitive dependency arrangement through Package Manager. Generated archives are retained so restoration never deletes user data.
-
-Commit these files together after installation:
+Commit the following together:
 
 - `Packages/manifest.json` and `Packages/packages-lock.json`
 - `Packages/StableProjectionArchives/*.tgz`
 - `ProjectSettings/StableProjection.install.json`
 
-The restore record is portable project data; do not ignore it. After a URP upgrade, check compatibility again and generate new archives. Never apply an old archive over a newer Unity release just because its package version string is the same.
+There's also a [ZIP download](https://github.com/rsklnkff/urp-stable-projection/releases/tag/v0.1.0) with [disk-install instructions](docs/INSTALLATION.md#package-manager-disk-installation).
 
-## Evidence and performance
+## Try it
 
-The originating game developer reports no noticeable performance degradation in Player testing on their devices, including Steam Deck and a laptop RTX 3050. This is a qualitative user report, not a measured zero-overhead guarantee or a platform certification for every adapter.
+Choose **Tools > Stable Projection > Create comparison demo scene**, then press Play. You can move the camera, change zoom, switch to perspective, or bring everything back to the origin. The demo creates its own folder under `Assets/StableProjectionDemo`.
 
-The included GPU check measures projection error against a double-precision reference, including ordinary custom/UI/shadow views and camera motion. Numerical accuracy tests are distinct from gameplay regression testing. Compare warmed Player GPU frame times on your own hardware, using identical scenes/settings and complete install/restore for an A/B benchmark.
+## Orthographic cameras
 
-See [implementation](docs/IMPLEMENTATION.md), [validation](docs/VALIDATION.md), and [contributing](CONTRIBUTING.md).
+The shader patch helps both perspective and orthographic rendering. For an orthographic camera, you can also add `PreciseOrthographicCamera` to reduce whole-view jitter caused by rounding in the camera transform.
+
+It calculates the camera rig's position from local transforms using doubles. If your game already tracks the camera in double precision, pass its position each frame after moving it:
+
+```csharp
+preciseCamera.SetPrecisePosition(cameraX, cameraY, cameraZ);
+```
+
+Pass the camera's final position, including rig offsets. This component controls the projection matrix, so it shouldn't run alongside another script that also sets a custom projection. Disabling it restores the normal projection.
+
+## Performance and limits
+
+I've tested the original fix in Void Logistics Player builds, including on Steam Deck and a laptop RTX 3050, and haven't noticed a performance difference. It does add vertex arithmetic, so the cost will depend on your game and hardware.
+
+This fixes precision lost during projection. It can't recover detail already lost in CPU transforms, world-space particles or batched geometry. Custom shaders doing their own matrix math may need changes. Test your rendering features in a Player build before shipping.
+
+See [how it works](docs/IMPLEMENTATION.md), [test instructions](docs/VALIDATION.md), or [contributing](CONTRIBUTING.md).
+
+## Removing or upgrading
+
+Use **Restore original packages** before upgrading URP or removing this package. Keep the install record until restoration is complete. After upgrading, run the compatibility check again and generate new archives.
+
+See [installation and recovery](docs/INSTALLATION.md) for details.
 
 ## License
 
-Unity-derived changes and this accompanying package are distributed under the [Unity Companion License](LICENSE.md) for Unity-dependent projects. Generated Core/URP packages retain their existing copyright, license and third-party notices. This is an independent community modification, not an official Unity package.
+[Unity Companion License](LICENSE.md), for Unity-dependent projects. Unity's existing copyright and third-party notices are preserved. This is a community project, not an official Unity package.
