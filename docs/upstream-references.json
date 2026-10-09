@@ -1,0 +1,27 @@
+{
+  "urp-14": {
+    "branch": "2022.3/staging",
+    "commit": "03ca85dffdde4b7bc1d6870074e6f5ff9f0352a3",
+    "date": "2026-05-06T15:08:04Z"
+  },
+  "urp-17.0": {
+    "branch": "6000.0/staging",
+    "commit": "feb4de2d9a93a4ae10d287d3a6d7003d08ea3e53",
+    "date": "2026-09-09T17:13:38Z"
+  },
+  "urp-17.1": {
+    "branch": "6000.1/staging",
+    "commit": "08d6b246bfdea0d7539234cc4d6072ec28b6e98d",
+    "date": "2025-10-28T16:52:25Z"
+  },
+  "urp-17.2": {
+    "branch": "6000.2/staging",
+    "commit": "59ebf6c05c1eefd11c9532b280e2cb32a9b2d5bd",
+    "date": "2025-12-08T15:56:04Z"
+  },
+  "urp-17.3": {
+    "branch": "6000.3/staging",
+    "commit": "2d2e78cc9d6254bc6e7c9c5552cea053508e86cb",
+    "date": "2026-07-01T14:00:49Z"
+  }
+}

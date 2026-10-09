@@ -1,0 +1,412 @@
+--- a/Packages/com.unity.render-pipelines.core/ShaderLibrary/SpaceTransforms.hlsl
++++ b/Packages/com.unity.render-pipelines.core/ShaderLibrary/SpaceTransforms.hlsl
+@@ -94,27 +94,138 @@
+     #endif
+ }
+ 
++// Compensate the products and sums that cancel large affine translations.
++// No camera-specific state: UI, shadows and custom views use their own matrices.
++#if defined(STABLE_PROJECTION_ENABLED)
++float3 StableProjectionSplitHigh(float3 value)
++{
++    precise float3 scaled = value * 4097.0;
++    precise float3 high = scaled - (scaled - value);
++    return high;
++}
++
++float3 StableProjectionTwoSum(float3 a, float3 b, out float3 error)
++{
++    // Magnitude-order the operands for the FastTwoSum residual.
++    precise float3 large = abs(a) >= abs(b) ? a : b;
++    precise float3 small = abs(a) >= abs(b) ? b : a;
++    precise float3 sum = large + small;
++    precise float3 virtualSmall = sum - large;
++    precise float3 remainder = small - virtualSmall;
++    error = remainder;
++    return sum;
++}
++
++float3 StableProjectionProductError(float3 a, float3 b, float3 product)
++{
++    precise float3 aHigh = StableProjectionSplitHigh(a);
++    precise float3 bHigh = StableProjectionSplitHigh(b);
++    precise float3 aLow = a - aHigh;
++    precise float3 bLow = b - bHigh;
++    precise float3 error = ((aHigh * bHigh - product) + aHigh * bLow) + aLow * bHigh;
++    return error + aLow * bLow;
++}
++
++float3 StableProjectionAffinePosition(float4x4 transform, float3 position)
++{
++    precise float3 a = transform._m00_m10_m20;
++    precise float3 b = transform._m01_m11_m21;
++    precise float3 c = transform._m02_m12_m22;
++    precise float3 x = a * position.x;
++    precise float3 y = b * position.y;
++    precise float3 z = c * position.z;
++    precise float3 error = StableProjectionProductError(a, position.xxx, x)
++        + StableProjectionProductError(b, position.yyy, y) + StableProjectionProductError(c, position.zzz, z);
++    float3 remainder;
++    precise float3 sum = StableProjectionTwoSum(transform._m03_m13_m23, x, remainder);
++    error += remainder;
++    sum = StableProjectionTwoSum(sum, y, remainder);
++    error += remainder;
++    sum = StableProjectionTwoSum(sum, z, remainder);
++    error += remainder;
++    return sum + error;
++}
++
++float3 StableProjectionObjectToView(float4 positionOS, float4x4 model, float4x4 view)
++{
++    precise float3x3 rotation = mul((float3x3)view, (float3x3)model);
++    precise float3 origin = StableProjectionAffinePosition(view, model._m03_m13_m23);
++    precise float3 positionVS = mul(rotation, positionOS.xyz) + origin * positionOS.w;
++    return positionVS;
++}
++#endif
++
+ float3 TransformWorldToView(float3 positionWS)
+ {
++#if defined(STABLE_PROJECTION_USE) && !defined(SHADER_STAGE_FRAGMENT)
++    return StableProjectionAffinePosition(GetWorldToViewMatrix(), positionWS);
++#else
+     return mul(GetWorldToViewMatrix(), float4(positionWS, 1.0)).xyz;
++#endif
+ }
+ 
+ float3 TransformViewToWorld(float3 positionVS)
+ {
+     return mul(GetViewToWorldMatrix(), float4(positionVS, 1.0)).xyz;
+ }
++
++#if defined(STABLE_PROJECTION_ENABLED)
++float3 TransformObjectToView(float3 positionOS)
++{
++#if defined(STABLE_PROJECTION_USE)
++    return StableProjectionObjectToView(float4(positionOS, 1.0), GetObjectToWorldMatrix(), GetWorldToViewMatrix());
++#else
++    return TransformWorldToView(TransformObjectToWorld(positionOS));
++#endif
++}
++#endif
+ 
+ // Transforms position from object space to homogenous space
+ float4 TransformObjectToHClip(float3 positionOS)
+ {
+-    // More efficient than computing M*VP matrix product
++#if defined(STABLE_PROJECTION_USE)
++    precise float4 positionCS = mul(GetViewToHClipMatrix(), float4(TransformObjectToView(positionOS), 1.0));
++    return positionCS;
++#else
+     return mul(GetWorldToHClipMatrix(), mul(GetObjectToWorldMatrix(), float4(positionOS, 1.0)));
+-}
++#endif
++}
++
++#if defined(STABLE_PROJECTION_ENABLED)
++float4 TransformObjectToHClipWithMotionMatrices(float4 positionOS, float4x4 objectToWorld, bool previousFrame = false)
++{
++#if defined(STABLE_PROJECTION_USE) && !defined(USING_STEREO_MATRICES)
++    float4x4 view = previousFrame ? _StableProjectionPreviousMotionView : _StableProjectionMotionView;
++    float4x4 projection = previousFrame ? _StableProjectionPreviousMotionProjection : _StableProjectionMotionProjection;
++    precise float3 positionVS = StableProjectionObjectToView(positionOS, objectToWorld, view);
++    return mul(projection, float4(positionVS, positionOS.w));
++#else
++    float4x4 worldToClip = previousFrame ? _PrevViewProjMatrix : _NonJitteredViewProjMatrix;
++    precise float4x4 objectToClip = mul(worldToClip, objectToWorld);
++    return mul(objectToClip, positionOS);
++#endif
++}
++
++float4 TransformObjectToHClipWithWorldOffset(float3 positionOS, float3 offsetWS)
++{
++#if defined(STABLE_PROJECTION_USE)
++    precise float3 positionVS = TransformObjectToView(positionOS);
++    precise float3 offsetVS = mul((float3x3)GetWorldToViewMatrix(), offsetWS);
++    return mul(GetViewToHClipMatrix(), float4(positionVS + offsetVS, 1.0));
++#else
++    return mul(GetWorldToHClipMatrix(), float4(TransformObjectToWorld(positionOS) + offsetWS, 1.0));
++#endif
++}
++#endif
+ 
+ // Transforms position from world space to homogenous space
+ float4 TransformWorldToHClip(float3 positionWS)
+ {
++#if defined(STABLE_PROJECTION_USE) && !defined(SHADER_STAGE_FRAGMENT)
++    return mul(GetViewToHClipMatrix(), float4(TransformWorldToView(positionWS), 1.0));
++#else
+     return mul(GetWorldToHClipMatrix(), float4(positionWS, 1.0));
++#endif
+ }
+ 
+ // Transforms position from view space to homogenous space
+--- a/Packages/com.unity.render-pipelines.universal/Editor/ShaderGraph/Includes/Varyings.hlsl
++++ b/Packages/com.unity.render-pipelines.universal/Editor/ShaderGraph/Includes/Varyings.hlsl
+@@ -126,7 +126,11 @@
+     #else
+         float3 lightDirectionWS = _LightDirection;
+     #endif
++    #if defined(HAVE_VERTEX_MODIFICATION) || defined(HAVE_VFX_MODIFICATION)
+     output.positionCS = TransformWorldToHClip(ApplyShadowBias(positionWS, normalWS, lightDirectionWS));
++    #else
++        output.positionCS = TransformObjectToShadowHClip(input.positionOS, normalWS, lightDirectionWS);
++    #endif
+     #if UNITY_REVERSED_Z
+         output.positionCS.z = min(output.positionCS.z, UNITY_NEAR_CLIP_VALUE);
+     #else
+@@ -135,7 +139,11 @@
+ #elif (SHADERPASS == SHADERPASS_META)
+     output.positionCS = UnityMetaVertexPosition(input.positionOS, input.uv1.xy, input.uv2.xy, unity_LightmapST, unity_DynamicLightmapST);
+ #else
+-    output.positionCS = TransformWorldToHClip(positionWS);
++    #if defined(HAVE_VERTEX_MODIFICATION) || defined(HAVE_VFX_MODIFICATION)
++        output.positionCS = TransformWorldToHClip(positionWS);
++    #else
++        output.positionCS = vertexInput.positionCS;
++    #endif
+ #endif
+ 
+ #if defined(VARYINGS_NEED_TEXCOORD0) || defined(VARYINGS_DS_NEED_TEXCOORD0)
+--- a/Packages/com.unity.render-pipelines.universal/Runtime/MotionVectors.cs
++++ b/Packages/com.unity.render-pipelines.universal/Runtime/MotionVectors.cs
+@@ -1,4 +1,6 @@
+ using UnityEngine;
++
++using Unity.Mathematics;
+ 
+ namespace UnityEngine.Rendering.Universal
+ {
+@@ -11,6 +13,11 @@
+ 
+         readonly Matrix4x4[] m_ViewProjection = new Matrix4x4[k_EyeCount];
+         readonly Matrix4x4[] m_PreviousViewProjection = new Matrix4x4[k_EyeCount];
++        Matrix4x4 m_StableProjectionView = Matrix4x4.identity;
++        Matrix4x4 m_StableProjectionProjection = Matrix4x4.identity;
++        Matrix4x4 m_StableProjectionPreviousView = Matrix4x4.identity;
++        Matrix4x4 m_StableProjectionPreviousProjection = Matrix4x4.identity;
++
+         readonly int[] m_LastFrameIndex = new int[k_EyeCount];
+         readonly float[] m_PrevAspectRatio = new float[k_EyeCount];
+ 
+@@ -53,8 +60,39 @@
+         }
+         #endregion
+ 
++        internal static readonly int motionViewId = Shader.PropertyToID("_StableProjectionMotionView");
++        internal static readonly int motionProjectionId = Shader.PropertyToID("_StableProjectionMotionProjection");
++        internal static readonly int previousMotionViewId = Shader.PropertyToID("_StableProjectionPreviousMotionView");
++        internal static readonly int previousMotionProjectionId = Shader.PropertyToID("_StableProjectionPreviousMotionProjection");
++        internal static readonly int clipToPreviousId = Shader.PropertyToID("_StableProjectionClipToPreviousClip");
++        internal static readonly int clipToNonJitteredId = Shader.PropertyToID("_StableProjectionClipToNonJitteredClip");
++
++        internal void SetCameraReprojectionMatrices(CommandBuffer cmd, Matrix4x4 view, Matrix4x4 projection)
++        {
++            var inverseView = math.inverse(new double4x4((float4x4)view));
++            var inverseProjection = math.inverse(new double4x4((float4x4)projection));
++            var previousView = math.mul(new double4x4((float4x4)m_StableProjectionPreviousView), inverseView);
++            var currentView = math.mul(new double4x4((float4x4)m_StableProjectionView), inverseView);
++            var previousClip = math.mul(new double4x4((float4x4)m_StableProjectionPreviousProjection), math.mul(previousView, inverseProjection));
++            var currentClip = math.mul(new double4x4((float4x4)m_StableProjectionProjection), math.mul(currentView, inverseProjection));
++            cmd.SetGlobalMatrix(clipToPreviousId, (float4x4)previousClip);
++            cmd.SetGlobalMatrix(clipToNonJitteredId, (float4x4)currentClip);
++        }
++
++        internal void SetStableProjectionMotionMatrices(CommandBuffer cmd)
++        {
++            cmd.SetGlobalMatrix(motionViewId, m_StableProjectionView);
++            cmd.SetGlobalMatrix(motionProjectionId, m_StableProjectionProjection);
++            cmd.SetGlobalMatrix(previousMotionViewId, m_StableProjectionPreviousView);
++            cmd.SetGlobalMatrix(previousMotionProjectionId, m_StableProjectionPreviousProjection);
++        }
++
+         public void Reset()
+         {
++            m_StableProjectionView = Matrix4x4.identity;
++            m_StableProjectionProjection = Matrix4x4.identity;
++            m_StableProjectionPreviousView = Matrix4x4.identity;
++            m_StableProjectionPreviousProjection = Matrix4x4.identity;
+             for (int i = 0; i < m_ViewProjection.Length; i++)
+             {
+                 m_ViewProjection[i] = Matrix4x4.identity;
+@@ -95,7 +133,13 @@
+                 else
+ #endif
+                 {
+-                    var gpuVP = GL.GetGPUProjectionMatrix(cameraData.GetProjectionMatrixNoJitter(0), true) * cameraData.GetViewMatrix(0);
++                    var gpuP = GL.GetGPUProjectionMatrix(cameraData.GetProjectionMatrixNoJitter(0), true);
++                    var gpuV = cameraData.GetViewMatrix(0);
++                    var gpuVP = gpuP * gpuV;
++                    m_StableProjectionPreviousView = aspectChanged ? gpuV : m_StableProjectionView;
++                    m_StableProjectionPreviousProjection = aspectChanged ? gpuP : m_StableProjectionProjection;
++                    m_StableProjectionView = gpuV;
++                    m_StableProjectionProjection = gpuP;
+                     m_PreviousViewProjection[idx] = aspectChanged ? gpuVP : m_ViewProjection[idx];
+                     m_ViewProjection[idx] = gpuVP;
+                 }
+--- a/Packages/com.unity.render-pipelines.universal/ShaderLibrary/Input.hlsl
++++ b/Packages/com.unity.render-pipelines.universal/ShaderLibrary/Input.hlsl
+@@ -214,6 +214,23 @@
+ #include "Packages/com.unity.visualeffectgraph/Shaders/VFXMatricesOverride.hlsl"
+ #endif
+ 
++// StableProjection: set to 0 and reimport shaders for an unpatched A/B comparison.
++#ifndef STABLE_PROJECTION_ENABLED
++#define STABLE_PROJECTION_ENABLED 1
++#endif
++
++float4x4 _StableProjectionMotionView;
++float4x4 _StableProjectionMotionProjection;
++float4x4 _StableProjectionPreviousMotionView;
++float4x4 _StableProjectionPreviousMotionProjection;
++float4x4 _StableProjectionClipToPreviousClip;
++float4x4 _StableProjectionClipToNonJitteredClip;
++
++// These paths own world-space vertex modification/history; preserve their contract.
++#if STABLE_PROJECTION_ENABLED && !defined(HAVE_VFX_MODIFICATION) && !defined(HAVE_VERTEX_MODIFICATION)
++#define STABLE_PROJECTION_USE
++#endif
++
+ #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/SpaceTransforms.hlsl"
+ 
+ #endif
+--- a/Packages/com.unity.render-pipelines.universal/ShaderLibrary/ShaderVariablesFunctions.hlsl
++++ b/Packages/com.unity.render-pipelines.universal/ShaderLibrary/ShaderVariablesFunctions.hlsl
+@@ -8,8 +8,13 @@
+ {
+     VertexPositionInputs input;
+     input.positionWS = TransformObjectToWorld(positionOS);
++#if defined(STABLE_PROJECTION_USE)
++    input.positionVS = TransformObjectToView(positionOS);
++    input.positionCS = TransformObjectToHClip(positionOS);
++#else
+     input.positionVS = TransformWorldToView(input.positionWS);
+     input.positionCS = TransformWorldToHClip(input.positionWS);
++#endif
+ 
+     float4 ndc = input.positionCS * 0.5f;
+     input.positionNDC.xy = float2(ndc.x, ndc.y * _ProjectionParams.x) + ndc.w;
+--- a/Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl
++++ b/Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl
+@@ -480,6 +480,15 @@
+     return positionWS;
+ }
+ 
++
++float4 TransformObjectToShadowHClip(float3 positionOS, float3 normalWS, float3 lightDirection)
++{
++#if defined(STABLE_PROJECTION_USE)
++    return TransformObjectToHClipWithWorldOffset(positionOS, ApplyShadowBias(float3(0.0, 0.0, 0.0), normalWS, lightDirection));
++#else
++    return TransformWorldToHClip(ApplyShadowBias(TransformObjectToWorld(positionOS), normalWS, lightDirection));
++#endif
++}
+ ///////////////////////////////////////////////////////////////////////////////
+ // Deprecated                                                                 /
+ ///////////////////////////////////////////////////////////////////////////////
+--- a/Packages/com.unity.render-pipelines.universal/Shaders/CameraMotionVectors.shader
++++ b/Packages/com.unity.render-pipelines.universal/Shaders/CameraMotionVectors.shader
+@@ -83,12 +83,18 @@
+                 }
+             #endif
+ 
++#if defined(STABLE_PROJECTION_USE) && !defined(USING_STEREO_MATRICES)
++                float4 clip = ComputeClipSpacePosition(uv, depth);
++                float4 posCS = mul(_StableProjectionClipToNonJitteredClip, clip);
++                float4 prevPosCS = mul(_StableProjectionClipToPreviousClip, clip);
++#else
+                 // Reconstruct world position
+                 float3 posWS = ComputeWorldSpacePosition(uv, depth, UNITY_MATRIX_I_VP);
+ 
+                 // Multiply with current and previous non-jittered view projection
+                 float4 posCS = mul(_NonJitteredViewProjMatrix, float4(posWS.xyz, 1.0));
+                 float4 prevPosCS = mul(_PrevViewProjMatrix, float4(posWS.xyz, 1.0));
++#endif
+ 
+                 POS_NDC_TYPE posNDC = posCS.xy * rcp(posCS.w);
+                 POS_NDC_TYPE prevPosNDC = prevPosCS.xy * rcp(prevPosCS.w);
+--- a/Packages/com.unity.render-pipelines.universal/Shaders/Nature/SpeedTree7BillboardPasses.hlsl
++++ b/Packages/com.unity.render-pipelines.universal/Shaders/Nature/SpeedTree7BillboardPasses.hlsl
+@@ -131,7 +131,7 @@
+     float3 lightDirectionWS = _LightDirection;
+ #endif
+ 
+-    output.clipPos = TransformWorldToHClip(ApplyShadowBias(vertexInput.positionWS, normalWS, lightDirectionWS));
++    output.clipPos = TransformObjectToShadowHClip(input.vertex.xyz, normalWS, lightDirectionWS);
+ #else
+     output.clipPos = vertexInput.positionCS;
+ #endif
+--- a/Packages/com.unity.render-pipelines.universal/Shaders/Nature/SpeedTree7Passes.hlsl
++++ b/Packages/com.unity.render-pipelines.universal/Shaders/Nature/SpeedTree7Passes.hlsl
+@@ -189,7 +189,7 @@
+     float3 lightDirectionWS = _LightDirection;
+ #endif
+ 
+-    output.clipPos = TransformWorldToHClip(ApplyShadowBias(vertexInput.positionWS, normalWS, lightDirectionWS));
++    output.clipPos = TransformObjectToShadowHClip(input.vertex.xyz, normalWS, lightDirectionWS);
+ #else
+     output.clipPos = vertexInput.positionCS;
+ #endif
+--- a/Packages/com.unity.render-pipelines.universal/Shaders/Nature/SpeedTree8Passes.hlsl
++++ b/Packages/com.unity.render-pipelines.universal/Shaders/Nature/SpeedTree8Passes.hlsl
+@@ -308,7 +308,7 @@
+     float3 lightDirectionWS = _LightDirection;
+ #endif
+ 
+-    float4 positionCS = TransformWorldToHClip(ApplyShadowBias(vertexInput.positionWS, normalWS, lightDirectionWS));
++    float4 positionCS = TransformObjectToShadowHClip(input.vertex.xyz, normalWS, lightDirectionWS);
+     output.clipPos = positionCS;
+ #else
+     output.clipPos = vertexInput.positionCS;
+--- a/Packages/com.unity.render-pipelines.universal/Shaders/ShadowCasterPass.hlsl
++++ b/Packages/com.unity.render-pipelines.universal/Shaders/ShadowCasterPass.hlsl
+@@ -41,7 +41,7 @@
+     float3 lightDirectionWS = _LightDirection;
+ #endif
+ 
+-    float4 positionCS = TransformWorldToHClip(ApplyShadowBias(positionWS, normalWS, lightDirectionWS));
++    float4 positionCS = TransformObjectToShadowHClip(input.positionOS.xyz, normalWS, lightDirectionWS);
+ 
+ #if UNITY_REVERSED_Z
+     positionCS.z = min(positionCS.z, UNITY_NEAR_CLIP_VALUE);
+--- a/Packages/com.unity.render-pipelines.universal/Shaders/Terrain/TerrainLitPasses.hlsl
++++ b/Packages/com.unity.render-pipelines.universal/Shaders/Terrain/TerrainLitPasses.hlsl
+@@ -473,7 +473,7 @@
+     float3 lightDirectionWS = _LightDirection;
+ #endif
+ 
+-    float4 clipPos = TransformWorldToHClip(ApplyShadowBias(positionWS, normalWS, lightDirectionWS));
++    float4 clipPos = TransformObjectToShadowHClip(v.position.xyz, normalWS, lightDirectionWS);
+ 
+ #if UNITY_REVERSED_Z
+     clipPos.z = min(clipPos.z, UNITY_NEAR_CLIP_VALUE);
+--- a/Packages/com.unity.render-pipelines.universal/Shaders/ObjectMotionVectors.shader
++++ b/Packages/com.unity.render-pipelines.universal/Shaders/ObjectMotionVectors.shader
+@@ -77,10 +77,10 @@
+                     output.positionCS.z += unity_MotionVectorsParams.z * output.positionCS.w;
+                 #endif
+ 
+-                output.positionCSNoJitter = mul(_NonJitteredViewProjMatrix, mul(UNITY_MATRIX_M, input.position));
++                output.positionCSNoJitter = TransformObjectToHClipWithMotionMatrices(input.position, GetObjectToWorldMatrix());
+ 
+                 const float4 prevPos = (unity_MotionVectorsParams.x == 1) ? float4(input.positionOld, 1) : input.position;
+-                output.previousPositionCSNoJitter = mul(_PrevViewProjMatrix, mul(UNITY_PREV_MATRIX_M, prevPos));
++                output.previousPositionCSNoJitter = TransformObjectToHClipWithMotionMatrices(prevPos, GetPrevObjectToWorldMatrix(), true);
+ 
+                 return output;
+             }
+--- a/Packages/com.unity.render-pipelines.universal/Runtime/Passes/MotionVectorRenderPass.cs
++++ b/Packages/com.unity.render-pipelines.universal/Runtime/Passes/MotionVectorRenderPass.cs
+@@ -92,6 +92,12 @@
+             var cmd = renderingData.commandBuffer;
+             using (new ProfilingScope(cmd, ProfilingSampler.Get(URPProfileId.MotionVectors)))
+             {
++                if (!cameraData.xr.enabled)
++                {
++                    motionData.SetStableProjectionMotionMatrices(cmd);
++                    motionData.SetCameraReprojectionMatrices(cmd, cameraData.GetViewMatrix(), cameraData.GetGPUProjectionMatrix());
++                }
++
+                 int passID = motionData.GetXRMultiPassId(ref cameraData);
+ 
+                 context.ExecuteCommandBuffer(cmd);

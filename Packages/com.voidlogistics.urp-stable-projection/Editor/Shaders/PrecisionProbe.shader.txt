@@ -1,0 +1,43 @@
+Shader "Hidden/StableProjection/CameraPrecisionProbe"
+{
+    SubShader
+    {
+        Pass
+        {
+            Cull Off ZTest Always ZWrite Off
+            HLSLPROGRAM
+            #pragma target 4.5
+            #pragma vertex Vert
+            #pragma fragment Frag
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            float4 _ProbeVertex;
+            float4x4 _ProbePreviousModel;
+            int _ProbeMode;
+            struct Varyings
+            {
+                float4 positionCS : SV_POSITION;
+                nointerpolation float4 value : TEXCOORD0;
+            };
+            Varyings Vert(uint vertexID : SV_VertexID)
+            {
+                Varyings output;
+                output.positionCS = GetFullScreenTriangleVertexPosition(vertexID);
+                if (_ProbeMode == 1 || _ProbeMode == 2)
+                {
+                    output.value = TransformObjectToHClipWithMotionMatrices(_ProbeVertex, _ProbeMode == 2 ? _ProbePreviousModel : GetObjectToWorldMatrix(), _ProbeMode == 2);
+                }
+                else if (_ProbeMode == 3)
+                {
+                    output.value = TransformWorldToHClip(_ProbeVertex.xyz);
+                }
+                else
+                {
+                    output.value = TransformObjectToHClip(_ProbeVertex.xyz);
+                }
+                return output;
+            }
+            float4 Frag(Varyings input) : SV_Target { return input.value; }
+            ENDHLSL
+        }
+    }
+}

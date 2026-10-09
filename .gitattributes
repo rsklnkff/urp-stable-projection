@@ -1,0 +1,14 @@
+* text=auto eol=lf
+*.cs text eol=lf
+*.hlsl text eol=lf
+*.shader text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.patch text eol=lf whitespace=-blank-at-eol
+*.png binary
+*.gif binary
+*.tgz binary
+
+# Unified diff context and Unity-generated empty YAML fields retain their spaces.
+*.meta text eol=lf whitespace=-blank-at-eol

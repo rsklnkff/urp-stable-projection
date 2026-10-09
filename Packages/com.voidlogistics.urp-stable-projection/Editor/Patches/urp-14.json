@@ -1,0 +1,182 @@
+{
+  "id": "urp-14",
+  "major": 14,
+  "minor": 0,
+  "referenceVersion": "14.0.12",
+  "files": [
+    {
+      "path": "com.unity.render-pipelines.core/ShaderLibrary/SpaceTransforms.hlsl",
+      "beforeSha256": "0aacff0beed31acf46ae46547a93fc8802421da08b8e97c811c0e69aef1a2e66",
+      "afterSha256": "7cdb590f7659b81c5e1ab7e8bce78a81d1ca5855af1b66bd93d0f7f4c4da0d9a",
+      "edits": [
+        {
+          "before": "    #endif\n}\n\nfloat3 TransformWorldToView(float3 positionWS)\n{\n    return mul(GetWorldToViewMatrix(), float4(positionWS, 1.0)).xyz;\n}\n\nfloat3 TransformViewToWorld(float3 positionVS)\n",
+          "after": "    #endif\n}\n\n// Compensate the products and sums that cancel large affine translations.\n// No camera-specific state: UI, shadows and custom views use their own matrices.\n#if defined(STABLE_PROJECTION_ENABLED)\nfloat3 StableProjectionSplitHigh(float3 value)\n{\n    precise float3 scaled = value * 4097.0;\n    precise float3 high = scaled - (scaled - value);\n    return high;\n}\n\nfloat3 StableProjectionTwoSum(float3 a, float3 b, out float3 error)\n{\n    // Magnitude-order the operands for the FastTwoSum residual.\n    precise float3 large = abs(a) >= abs(b) ? a : b;\n    precise float3 small = abs(a) >= abs(b) ? b : a;\n    precise float3 sum = large + small;\n    precise float3 virtualSmall = sum - large;\n    precise float3 remainder = small - virtualSmall;\n    error = remainder;\n    return sum;\n}\n\nfloat3 StableProjectionProductError(float3 a, float3 b, float3 product)\n{\n    precise float3 aHigh = StableProjectionSplitHigh(a);\n    precise float3 bHigh = StableProjectionSplitHigh(b);\n    precise float3 aLow = a - aHigh;\n    precise float3 bLow = b - bHigh;\n    precise float3 error = ((aHigh * bHigh - product) + aHigh * bLow) + aLow * bHigh;\n    return error + aLow * bLow;\n}\n\nfloat3 StableProjectionAffinePosition(float4x4 transform, float3 position)\n{\n    precise float3 a = transform._m00_m10_m20;\n    precise float3 b = transform._m01_m11_m21;\n    precise float3 c = transform._m02_m12_m22;\n    precise float3 x = a * position.x;\n    precise float3 y = b * position.y;\n    precise float3 z = c * position.z;\n    precise float3 error = StableProjectionProductError(a, position.xxx, x)\n        + StableProjectionProductError(b, position.yyy, y) + StableProjectionProductError(c, position.zzz, z);\n    float3 remainder;\n    precise float3 sum = StableProjectionTwoSum(transform._m03_m13_m23, x, remainder);\n    error += remainder;\n    sum = StableProjectionTwoSum(sum, y, remainder);\n    error += remainder;\n    sum = StableProjectionTwoSum(sum, z, remainder);\n    error += remainder;\n    return sum + error;\n}\n\nfloat3 StableProjectionObjectToView(float4 positionOS, float4x4 model, float4x4 view)\n{\n    precise float3x3 rotation = mul((float3x3)view, (float3x3)model);\n    precise float3 origin = StableProjectionAffinePosition(view, model._m03_m13_m23);\n    precise float3 positionVS = mul(rotation, positionOS.xyz) + origin * positionOS.w;\n    return positionVS;\n}\n#endif\n\nfloat3 TransformWorldToView(float3 positionWS)\n{\n#if defined(STABLE_PROJECTION_USE) && !defined(SHADER_STAGE_FRAGMENT)\n    return StableProjectionAffinePosition(GetWorldToViewMatrix(), positionWS);\n#else\n    return mul(GetWorldToViewMatrix(), float4(positionWS, 1.0)).xyz;\n#endif\n}\n\nfloat3 TransformViewToWorld(float3 positionVS)\n"
+        },
+        {
+          "before": "    return mul(GetViewToWorldMatrix(), float4(positionVS, 1.0)).xyz;\n}\n\n// Transforms position from object space to homogenous space\nfloat4 TransformObjectToHClip(float3 positionOS)\n{\n    // More efficient than computing M*VP matrix product\n    return mul(GetWorldToHClipMatrix(), mul(GetObjectToWorldMatrix(), float4(positionOS, 1.0)));\n}\n\n// Transforms position from world space to homogenous space\nfloat4 TransformWorldToHClip(float3 positionWS)\n{\n    return mul(GetWorldToHClipMatrix(), float4(positionWS, 1.0));\n}\n\n// Transforms position from view space to homogenous space\n",
+          "after": "    return mul(GetViewToWorldMatrix(), float4(positionVS, 1.0)).xyz;\n}\n\n#if defined(STABLE_PROJECTION_ENABLED)\nfloat3 TransformObjectToView(float3 positionOS)\n{\n#if defined(STABLE_PROJECTION_USE)\n    return StableProjectionObjectToView(float4(positionOS, 1.0), GetObjectToWorldMatrix(), GetWorldToViewMatrix());\n#else\n    return TransformWorldToView(TransformObjectToWorld(positionOS));\n#endif\n}\n#endif\n\n// Transforms position from object space to homogenous space\nfloat4 TransformObjectToHClip(float3 positionOS)\n{\n#if defined(STABLE_PROJECTION_USE)\n    precise float4 positionCS = mul(GetViewToHClipMatrix(), float4(TransformObjectToView(positionOS), 1.0));\n    return positionCS;\n#else\n    return mul(GetWorldToHClipMatrix(), mul(GetObjectToWorldMatrix(), float4(positionOS, 1.0)));\n#endif\n}\n\n#if defined(STABLE_PROJECTION_ENABLED)\nfloat4 TransformObjectToHClipWithMotionMatrices(float4 positionOS, float4x4 objectToWorld, bool previousFrame = false)\n{\n#if defined(STABLE_PROJECTION_USE) && !defined(USING_STEREO_MATRICES)\n    float4x4 view = previousFrame ? _StableProjectionPreviousMotionView : _StableProjectionMotionView;\n    float4x4 projection = previousFrame ? _StableProjectionPreviousMotionProjection : _StableProjectionMotionProjection;\n    precise float3 positionVS = StableProjectionObjectToView(positionOS, objectToWorld, view);\n    return mul(projection, float4(positionVS, positionOS.w));\n#else\n    float4x4 worldToClip = previousFrame ? _PrevViewProjMatrix : _NonJitteredViewProjMatrix;\n    precise float4x4 objectToClip = mul(worldToClip, objectToWorld);\n    return mul(objectToClip, positionOS);\n#endif\n}\n\nfloat4 TransformObjectToHClipWithWorldOffset(float3 positionOS, float3 offsetWS)\n{\n#if defined(STABLE_PROJECTION_USE)\n    precise float3 positionVS = TransformObjectToView(positionOS);\n    precise float3 offsetVS = mul((float3x3)GetWorldToViewMatrix(), offsetWS);\n    return mul(GetViewToHClipMatrix(), float4(positionVS + offsetVS, 1.0));\n#else\n    return mul(GetWorldToHClipMatrix(), float4(TransformObjectToWorld(positionOS) + offsetWS, 1.0));\n#endif\n}\n#endif\n\n// Transforms position from world space to homogenous space\nfloat4 TransformWorldToHClip(float3 positionWS)\n{\n#if defined(STABLE_PROJECTION_USE) && !defined(SHADER_STAGE_FRAGMENT)\n    return mul(GetViewToHClipMatrix(), float4(TransformWorldToView(positionWS), 1.0));\n#else\n    return mul(GetWorldToHClipMatrix(), float4(positionWS, 1.0));\n#endif\n}\n\n// Transforms position from view space to homogenous space\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/Editor/ShaderGraph/Includes/Varyings.hlsl",
+      "beforeSha256": "54b854437553df8b06b1394387e1ad6c19191f270e2a58934d5e8abc381a6b01",
+      "afterSha256": "a504769189ee6d7338394986f62027fc32584f866924845d6e97a381dccfe550",
+      "edits": [
+        {
+          "before": "    #else\n        float3 lightDirectionWS = _LightDirection;\n    #endif\n    output.positionCS = TransformWorldToHClip(ApplyShadowBias(positionWS, normalWS, lightDirectionWS));\n    #if UNITY_REVERSED_Z\n        output.positionCS.z = min(output.positionCS.z, UNITY_NEAR_CLIP_VALUE);\n    #else\n",
+          "after": "    #else\n        float3 lightDirectionWS = _LightDirection;\n    #endif\n    #if defined(HAVE_VERTEX_MODIFICATION) || defined(HAVE_VFX_MODIFICATION)\n    output.positionCS = TransformWorldToHClip(ApplyShadowBias(positionWS, normalWS, lightDirectionWS));\n    #else\n        output.positionCS = TransformObjectToShadowHClip(input.positionOS, normalWS, lightDirectionWS);\n    #endif\n    #if UNITY_REVERSED_Z\n        output.positionCS.z = min(output.positionCS.z, UNITY_NEAR_CLIP_VALUE);\n    #else\n"
+        },
+        {
+          "before": "#elif (SHADERPASS == SHADERPASS_META)\n    output.positionCS = UnityMetaVertexPosition(input.positionOS, input.uv1.xy, input.uv2.xy, unity_LightmapST, unity_DynamicLightmapST);\n#else\n    output.positionCS = TransformWorldToHClip(positionWS);\n#endif\n\n#if defined(VARYINGS_NEED_TEXCOORD0) || defined(VARYINGS_DS_NEED_TEXCOORD0)\n",
+          "after": "#elif (SHADERPASS == SHADERPASS_META)\n    output.positionCS = UnityMetaVertexPosition(input.positionOS, input.uv1.xy, input.uv2.xy, unity_LightmapST, unity_DynamicLightmapST);\n#else\n    #if defined(HAVE_VERTEX_MODIFICATION) || defined(HAVE_VFX_MODIFICATION)\n        output.positionCS = TransformWorldToHClip(positionWS);\n    #else\n        output.positionCS = vertexInput.positionCS;\n    #endif\n#endif\n\n#if defined(VARYINGS_NEED_TEXCOORD0) || defined(VARYINGS_DS_NEED_TEXCOORD0)\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/Runtime/MotionVectors.cs",
+      "beforeSha256": "a778feed7bcc7b44810c887cc193286aa92e9641eb4a8d0e94b8a58ddcf6378f",
+      "afterSha256": "6ce0f3f646956b5d8133223fb8e5b3798d166bce9baecfd24e81e73b298eaaf7",
+      "edits": [
+        {
+          "before": "using UnityEngine;\n\nnamespace UnityEngine.Rendering.Universal\n{\n",
+          "after": "using UnityEngine;\n\nusing Unity.Mathematics;\n\nnamespace UnityEngine.Rendering.Universal\n{\n"
+        },
+        {
+          "before": "\n        readonly Matrix4x4[] m_ViewProjection = new Matrix4x4[k_EyeCount];\n        readonly Matrix4x4[] m_PreviousViewProjection = new Matrix4x4[k_EyeCount];\n        readonly int[] m_LastFrameIndex = new int[k_EyeCount];\n        readonly float[] m_PrevAspectRatio = new float[k_EyeCount];\n\n",
+          "after": "\n        readonly Matrix4x4[] m_ViewProjection = new Matrix4x4[k_EyeCount];\n        readonly Matrix4x4[] m_PreviousViewProjection = new Matrix4x4[k_EyeCount];\n        Matrix4x4 m_StableProjectionView = Matrix4x4.identity;\n        Matrix4x4 m_StableProjectionProjection = Matrix4x4.identity;\n        Matrix4x4 m_StableProjectionPreviousView = Matrix4x4.identity;\n        Matrix4x4 m_StableProjectionPreviousProjection = Matrix4x4.identity;\n\n        readonly int[] m_LastFrameIndex = new int[k_EyeCount];\n        readonly float[] m_PrevAspectRatio = new float[k_EyeCount];\n\n"
+        },
+        {
+          "before": "        }\n        #endregion\n\n        public void Reset()\n        {\n            for (int i = 0; i < m_ViewProjection.Length; i++)\n            {\n                m_ViewProjection[i] = Matrix4x4.identity;\n",
+          "after": "        }\n        #endregion\n\n        internal static readonly int motionViewId = Shader.PropertyToID(\"_StableProjectionMotionView\");\n        internal static readonly int motionProjectionId = Shader.PropertyToID(\"_StableProjectionMotionProjection\");\n        internal static readonly int previousMotionViewId = Shader.PropertyToID(\"_StableProjectionPreviousMotionView\");\n        internal static readonly int previousMotionProjectionId = Shader.PropertyToID(\"_StableProjectionPreviousMotionProjection\");\n        internal static readonly int clipToPreviousId = Shader.PropertyToID(\"_StableProjectionClipToPreviousClip\");\n        internal static readonly int clipToNonJitteredId = Shader.PropertyToID(\"_StableProjectionClipToNonJitteredClip\");\n\n        internal void SetCameraReprojectionMatrices(CommandBuffer cmd, Matrix4x4 view, Matrix4x4 projection)\n        {\n            var inverseView = math.inverse(new double4x4((float4x4)view));\n            var inverseProjection = math.inverse(new double4x4((float4x4)projection));\n            var previousView = math.mul(new double4x4((float4x4)m_StableProjectionPreviousView), inverseView);\n            var currentView = math.mul(new double4x4((float4x4)m_StableProjectionView), inverseView);\n            var previousClip = math.mul(new double4x4((float4x4)m_StableProjectionPreviousProjection), math.mul(previousView, inverseProjection));\n            var currentClip = math.mul(new double4x4((float4x4)m_StableProjectionProjection), math.mul(currentView, inverseProjection));\n            cmd.SetGlobalMatrix(clipToPreviousId, (float4x4)previousClip);\n            cmd.SetGlobalMatrix(clipToNonJitteredId, (float4x4)currentClip);\n        }\n\n        internal void SetStableProjectionMotionMatrices(CommandBuffer cmd)\n        {\n            cmd.SetGlobalMatrix(motionViewId, m_StableProjectionView);\n            cmd.SetGlobalMatrix(motionProjectionId, m_StableProjectionProjection);\n            cmd.SetGlobalMatrix(previousMotionViewId, m_StableProjectionPreviousView);\n            cmd.SetGlobalMatrix(previousMotionProjectionId, m_StableProjectionPreviousProjection);\n        }\n\n        public void Reset()\n        {\n            m_StableProjectionView = Matrix4x4.identity;\n            m_StableProjectionProjection = Matrix4x4.identity;\n            m_StableProjectionPreviousView = Matrix4x4.identity;\n            m_StableProjectionPreviousProjection = Matrix4x4.identity;\n            for (int i = 0; i < m_ViewProjection.Length; i++)\n            {\n                m_ViewProjection[i] = Matrix4x4.identity;\n"
+        },
+        {
+          "before": "                else\n#endif\n                {\n                    var gpuVP = GL.GetGPUProjectionMatrix(cameraData.GetProjectionMatrixNoJitter(0), true) * cameraData.GetViewMatrix(0);\n                    m_PreviousViewProjection[idx] = aspectChanged ? gpuVP : m_ViewProjection[idx];\n                    m_ViewProjection[idx] = gpuVP;\n                }\n",
+          "after": "                else\n#endif\n                {\n                    var gpuP = GL.GetGPUProjectionMatrix(cameraData.GetProjectionMatrixNoJitter(0), true);\n                    var gpuV = cameraData.GetViewMatrix(0);\n                    var gpuVP = gpuP * gpuV;\n                    m_StableProjectionPreviousView = aspectChanged ? gpuV : m_StableProjectionView;\n                    m_StableProjectionPreviousProjection = aspectChanged ? gpuP : m_StableProjectionProjection;\n                    m_StableProjectionView = gpuV;\n                    m_StableProjectionProjection = gpuP;\n                    m_PreviousViewProjection[idx] = aspectChanged ? gpuVP : m_ViewProjection[idx];\n                    m_ViewProjection[idx] = gpuVP;\n                }\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/ShaderLibrary/Input.hlsl",
+      "beforeSha256": "bfc83a0d635387b676465b8353b555da25d048908a42b7b29dfc8df4da5bc6c8",
+      "afterSha256": "4d88d991e62a2e6a7672feae534f2dfa82b30822a5bf2e39baa4a9ac90376c31",
+      "edits": [
+        {
+          "before": "#include \"Packages/com.unity.visualeffectgraph/Shaders/VFXMatricesOverride.hlsl\"\n#endif\n\n#include \"Packages/com.unity.render-pipelines.core/ShaderLibrary/SpaceTransforms.hlsl\"\n\n#endif\n",
+          "after": "#include \"Packages/com.unity.visualeffectgraph/Shaders/VFXMatricesOverride.hlsl\"\n#endif\n\n// StableProjection: set to 0 and reimport shaders for an unpatched A/B comparison.\n#ifndef STABLE_PROJECTION_ENABLED\n#define STABLE_PROJECTION_ENABLED 1\n#endif\n\nfloat4x4 _StableProjectionMotionView;\nfloat4x4 _StableProjectionMotionProjection;\nfloat4x4 _StableProjectionPreviousMotionView;\nfloat4x4 _StableProjectionPreviousMotionProjection;\nfloat4x4 _StableProjectionClipToPreviousClip;\nfloat4x4 _StableProjectionClipToNonJitteredClip;\n\n// These paths own world-space vertex modification/history; preserve their contract.\n#if STABLE_PROJECTION_ENABLED && !defined(HAVE_VFX_MODIFICATION) && !defined(HAVE_VERTEX_MODIFICATION)\n#define STABLE_PROJECTION_USE\n#endif\n\n#include \"Packages/com.unity.render-pipelines.core/ShaderLibrary/SpaceTransforms.hlsl\"\n\n#endif\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/ShaderLibrary/ShaderVariablesFunctions.hlsl",
+      "beforeSha256": "03a795160f2fc2fd6b9485cfb7fb48a28b70ff2e079b6069047ae8add3e08e1b",
+      "afterSha256": "bcef0acf4dcf00ff0a3538a48d0968705700445c6721a0db159782d48010045b",
+      "edits": [
+        {
+          "before": "{\n    VertexPositionInputs input;\n    input.positionWS = TransformObjectToWorld(positionOS);\n    input.positionVS = TransformWorldToView(input.positionWS);\n    input.positionCS = TransformWorldToHClip(input.positionWS);\n\n    float4 ndc = input.positionCS * 0.5f;\n    input.positionNDC.xy = float2(ndc.x, ndc.y * _ProjectionParams.x) + ndc.w;\n",
+          "after": "{\n    VertexPositionInputs input;\n    input.positionWS = TransformObjectToWorld(positionOS);\n#if defined(STABLE_PROJECTION_USE)\n    input.positionVS = TransformObjectToView(positionOS);\n    input.positionCS = TransformObjectToHClip(positionOS);\n#else\n    input.positionVS = TransformWorldToView(input.positionWS);\n    input.positionCS = TransformWorldToHClip(input.positionWS);\n#endif\n\n    float4 ndc = input.positionCS * 0.5f;\n    input.positionNDC.xy = float2(ndc.x, ndc.y * _ProjectionParams.x) + ndc.w;\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl",
+      "beforeSha256": "cf2e57dda1f7876cce39a6953e6f7fbab92cb4e33f499b5ab7ecaa01dba54b71",
+      "afterSha256": "fd0c537dd00c144fd9e2e9c54894daece4c8985b423c95d552d689cbc1312454",
+      "edits": [
+        {
+          "before": "    return positionWS;\n}\n\n///////////////////////////////////////////////////////////////////////////////\n// Deprecated                                                                 /\n///////////////////////////////////////////////////////////////////////////////\n",
+          "after": "    return positionWS;\n}\n\n\nfloat4 TransformObjectToShadowHClip(float3 positionOS, float3 normalWS, float3 lightDirection)\n{\n#if defined(STABLE_PROJECTION_USE)\n    return TransformObjectToHClipWithWorldOffset(positionOS, ApplyShadowBias(float3(0.0, 0.0, 0.0), normalWS, lightDirection));\n#else\n    return TransformWorldToHClip(ApplyShadowBias(TransformObjectToWorld(positionOS), normalWS, lightDirection));\n#endif\n}\n///////////////////////////////////////////////////////////////////////////////\n// Deprecated                                                                 /\n///////////////////////////////////////////////////////////////////////////////\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/Shaders/CameraMotionVectors.shader",
+      "beforeSha256": "2fa337edcbfccccae1d3bf92bd1caf918324fac817bca6b4c13ffd7d11a4067c",
+      "afterSha256": "34f4d7c9303db03027f121f15dc93964a3d3f5040b3c3898a69b9c299a2ef6f9",
+      "edits": [
+        {
+          "before": "                }\n            #endif\n\n                // Reconstruct world position\n                float3 posWS = ComputeWorldSpacePosition(uv, depth, UNITY_MATRIX_I_VP);\n\n                // Multiply with current and previous non-jittered view projection\n                float4 posCS = mul(_NonJitteredViewProjMatrix, float4(posWS.xyz, 1.0));\n                float4 prevPosCS = mul(_PrevViewProjMatrix, float4(posWS.xyz, 1.0));\n\n                POS_NDC_TYPE posNDC = posCS.xy * rcp(posCS.w);\n                POS_NDC_TYPE prevPosNDC = prevPosCS.xy * rcp(prevPosCS.w);\n",
+          "after": "                }\n            #endif\n\n#if defined(STABLE_PROJECTION_USE) && !defined(USING_STEREO_MATRICES)\n                float4 clip = ComputeClipSpacePosition(uv, depth);\n                float4 posCS = mul(_StableProjectionClipToNonJitteredClip, clip);\n                float4 prevPosCS = mul(_StableProjectionClipToPreviousClip, clip);\n#else\n                // Reconstruct world position\n                float3 posWS = ComputeWorldSpacePosition(uv, depth, UNITY_MATRIX_I_VP);\n\n                // Multiply with current and previous non-jittered view projection\n                float4 posCS = mul(_NonJitteredViewProjMatrix, float4(posWS.xyz, 1.0));\n                float4 prevPosCS = mul(_PrevViewProjMatrix, float4(posWS.xyz, 1.0));\n#endif\n\n                POS_NDC_TYPE posNDC = posCS.xy * rcp(posCS.w);\n                POS_NDC_TYPE prevPosNDC = prevPosCS.xy * rcp(prevPosCS.w);\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/Shaders/Nature/SpeedTree7BillboardPasses.hlsl",
+      "beforeSha256": "f258a697cf4525b20720d41bfeb6e446a57bc29c42bd3ee2b2890940bf1db70a",
+      "afterSha256": "7b87342b56572f3b72fbb9a46d541e672e4560e6c5614a82cab7785261e66677",
+      "edits": [
+        {
+          "before": "    float3 lightDirectionWS = _LightDirection;\n#endif\n\n    output.clipPos = TransformWorldToHClip(ApplyShadowBias(vertexInput.positionWS, normalWS, lightDirectionWS));\n#else\n    output.clipPos = vertexInput.positionCS;\n#endif\n",
+          "after": "    float3 lightDirectionWS = _LightDirection;\n#endif\n\n    output.clipPos = TransformObjectToShadowHClip(input.vertex.xyz, normalWS, lightDirectionWS);\n#else\n    output.clipPos = vertexInput.positionCS;\n#endif\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/Shaders/Nature/SpeedTree7Passes.hlsl",
+      "beforeSha256": "5f5aae559ae2c7865b8f22b982dd5a6726752959ba585ddfe41cf0eac7a42a15",
+      "afterSha256": "288e4ce213d6e97611f1d9a9b3e9cc9387861ec6d54849a0975f013e056d5fb2",
+      "edits": [
+        {
+          "before": "    float3 lightDirectionWS = _LightDirection;\n#endif\n\n    output.clipPos = TransformWorldToHClip(ApplyShadowBias(vertexInput.positionWS, normalWS, lightDirectionWS));\n#else\n    output.clipPos = vertexInput.positionCS;\n#endif\n",
+          "after": "    float3 lightDirectionWS = _LightDirection;\n#endif\n\n    output.clipPos = TransformObjectToShadowHClip(input.vertex.xyz, normalWS, lightDirectionWS);\n#else\n    output.clipPos = vertexInput.positionCS;\n#endif\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/Shaders/Nature/SpeedTree8Passes.hlsl",
+      "beforeSha256": "74fcbcf9781d4f7843d4dea42eeecf655db4dc761aab5f49a0515652f984e65d",
+      "afterSha256": "09d7faeb489d54fe97cc121caf16d33e6ee9fdc76eb29cff7aeb44d6c44bacb0",
+      "edits": [
+        {
+          "before": "    float3 lightDirectionWS = _LightDirection;\n#endif\n\n    float4 positionCS = TransformWorldToHClip(ApplyShadowBias(vertexInput.positionWS, normalWS, lightDirectionWS));\n    output.clipPos = positionCS;\n#else\n    output.clipPos = vertexInput.positionCS;\n",
+          "after": "    float3 lightDirectionWS = _LightDirection;\n#endif\n\n    float4 positionCS = TransformObjectToShadowHClip(input.vertex.xyz, normalWS, lightDirectionWS);\n    output.clipPos = positionCS;\n#else\n    output.clipPos = vertexInput.positionCS;\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/Shaders/ShadowCasterPass.hlsl",
+      "beforeSha256": "27fdd7c9c459b6c66d7dce3ea8d15a05e8245e7b94f7f1ddaead82a39ef473fe",
+      "afterSha256": "9878d9097c46eb89af28db90705dcb8aab00e7263756c08fd7da420e4d33f2b6",
+      "edits": [
+        {
+          "before": "    float3 lightDirectionWS = _LightDirection;\n#endif\n\n    float4 positionCS = TransformWorldToHClip(ApplyShadowBias(positionWS, normalWS, lightDirectionWS));\n\n#if UNITY_REVERSED_Z\n    positionCS.z = min(positionCS.z, UNITY_NEAR_CLIP_VALUE);\n",
+          "after": "    float3 lightDirectionWS = _LightDirection;\n#endif\n\n    float4 positionCS = TransformObjectToShadowHClip(input.positionOS.xyz, normalWS, lightDirectionWS);\n\n#if UNITY_REVERSED_Z\n    positionCS.z = min(positionCS.z, UNITY_NEAR_CLIP_VALUE);\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/Shaders/Terrain/TerrainLitPasses.hlsl",
+      "beforeSha256": "531dcca2372577400df55b5bbdc3a017aead2145034378fdf1832baf466ba541",
+      "afterSha256": "f1fbe2ab05a40cb90bafde9d9e0385d81c7d4cd0f6fae6b3b28e3c2eab56c366",
+      "edits": [
+        {
+          "before": "    float3 lightDirectionWS = _LightDirection;\n#endif\n\n    float4 clipPos = TransformWorldToHClip(ApplyShadowBias(positionWS, normalWS, lightDirectionWS));\n\n#if UNITY_REVERSED_Z\n    clipPos.z = min(clipPos.z, UNITY_NEAR_CLIP_VALUE);\n",
+          "after": "    float3 lightDirectionWS = _LightDirection;\n#endif\n\n    float4 clipPos = TransformObjectToShadowHClip(v.position.xyz, normalWS, lightDirectionWS);\n\n#if UNITY_REVERSED_Z\n    clipPos.z = min(clipPos.z, UNITY_NEAR_CLIP_VALUE);\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/Shaders/ObjectMotionVectors.shader",
+      "beforeSha256": "f5e63515f2fe1586494e60fc8b467d69cf63e3bed16bec51f355702eca2ba82a",
+      "afterSha256": "1c82350f45795dd16906742f29c6fd34a5fdc74b5ea28af913a7acdc2beefb9e",
+      "edits": [
+        {
+          "before": "                    output.positionCS.z += unity_MotionVectorsParams.z * output.positionCS.w;\n                #endif\n\n                output.positionCSNoJitter = mul(_NonJitteredViewProjMatrix, mul(UNITY_MATRIX_M, input.position));\n\n                const float4 prevPos = (unity_MotionVectorsParams.x == 1) ? float4(input.positionOld, 1) : input.position;\n                output.previousPositionCSNoJitter = mul(_PrevViewProjMatrix, mul(UNITY_PREV_MATRIX_M, prevPos));\n\n                return output;\n            }\n",
+          "after": "                    output.positionCS.z += unity_MotionVectorsParams.z * output.positionCS.w;\n                #endif\n\n                output.positionCSNoJitter = TransformObjectToHClipWithMotionMatrices(input.position, GetObjectToWorldMatrix());\n\n                const float4 prevPos = (unity_MotionVectorsParams.x == 1) ? float4(input.positionOld, 1) : input.position;\n                output.previousPositionCSNoJitter = TransformObjectToHClipWithMotionMatrices(prevPos, GetPrevObjectToWorldMatrix(), true);\n\n                return output;\n            }\n"
+        }
+      ]
+    },
+    {
+      "path": "com.unity.render-pipelines.universal/Runtime/Passes/MotionVectorRenderPass.cs",
+      "beforeSha256": "186d08f0d7f8e2456e2312c438e9f9469c62e65ff57401ec7bc03b63e056df03",
+      "afterSha256": "d087173b53b0fd1d062b2399e8f4f4c1b36e108bc5644a0dda6b1cbd61bd51d1",
+      "edits": [
+        {
+          "before": "            var cmd = renderingData.commandBuffer;\n            using (new ProfilingScope(cmd, ProfilingSampler.Get(URPProfileId.MotionVectors)))\n            {\n                int passID = motionData.GetXRMultiPassId(ref cameraData);\n\n                context.ExecuteCommandBuffer(cmd);\n",
+          "after": "            var cmd = renderingData.commandBuffer;\n            using (new ProfilingScope(cmd, ProfilingSampler.Get(URPProfileId.MotionVectors)))\n            {\n                if (!cameraData.xr.enabled)\n                {\n                    motionData.SetStableProjectionMotionMatrices(cmd);\n                    motionData.SetCameraReprojectionMatrices(cmd, cameraData.GetViewMatrix(), cameraData.GetGPUProjectionMatrix());\n                }\n\n                int passID = motionData.GetXRMultiPassId(ref cameraData);\n\n                context.ExecuteCommandBuffer(cmd);\n"
+        }
+      ]
+    }
+  ]
+}

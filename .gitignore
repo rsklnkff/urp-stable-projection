@@ -107,3 +107,10 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
+
+# Standalone package development and validation
+/.cache/
+/ValidationProjects/
+/Artifacts/
+__pycache__/
+.DS_Store

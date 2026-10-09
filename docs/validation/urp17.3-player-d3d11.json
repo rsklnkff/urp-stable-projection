@@ -1,0 +1,10 @@
+{
+    "passed": true,
+    "unity": "6000.3.11f1",
+    "graphicsApi": "Direct3D11",
+    "gpu": "NVIDIA GeForce RTX 5080",
+    "renderedFrames": 120,
+    "errors": 0,
+    "orangePixels": 32806,
+    "cyanPixels": 33086
+}

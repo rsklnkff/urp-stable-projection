@@ -1,0 +1,12 @@
+{
+  "passed": false,
+  "unity": "6000.2.10f1",
+  "urp": "17.2.0",
+  "graphicsApi": "Direct3D12",
+  "gpu": "NVIDIA GeForce RTX 5080",
+  "sample": 5,
+  "mode": "shadow view",
+  "errorPixels": 0.0243744792921712,
+  "tolerancePixels": 0.002,
+  "note": "Final adapter, default compiler path; backend excluded from supported scope."
+}

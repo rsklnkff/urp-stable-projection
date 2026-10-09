@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "profiles": [
+    {
+      "id": "urp-14",
+      "major": 14,
+      "minor": 0,
+      "referenceVersion": "14.0.12"
+    },
+    {
+      "id": "urp-17.0",
+      "major": 17,
+      "minor": 0,
+      "referenceVersion": "17.0.4"
+    },
+    {
+      "id": "urp-17.1",
+      "major": 17,
+      "minor": 1,
+      "referenceVersion": "17.1.0"
+    },
+    {
+      "id": "urp-17.2",
+      "major": 17,
+      "minor": 2,
+      "referenceVersion": "17.2.0"
+    },
+    {
+      "id": "urp-17.3",
+      "major": 17,
+      "minor": 3,
+      "referenceVersion": "17.3.0"
+    }
+  ]
+}

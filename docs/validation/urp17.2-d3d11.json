@@ -1,0 +1,24 @@
+{
+    "passed": true,
+    "unity": "6000.2.10f1",
+    "graphicsApi": "Direct3D11",
+    "gpu": "NVIDIA GeForce RTX 5080",
+    "rigError": 0.0,
+    "correctionError": 3.6105396269302546e-8,
+    "cameraMotionPixels": 1.2044901090065314e-7,
+    "lifecycleChecks": 5,
+    "historyChecks": 6,
+    "gpuSamples": 1536,
+    "maxErrorPixels": [
+        0.000012004764827752589,
+        0.000012156022854448475,
+        0.000012156022854448475,
+        3.6709782885384689e-8,
+        0.00002163699172826569,
+        0.0000024060042299211586
+    ],
+    "legacyMatrixPixels": [
+        1.1842501024085559,
+        0.000002007179936932075
+    ]
+}

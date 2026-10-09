@@ -1,0 +1,22 @@
+{
+  "name": "com.voidlogistics.urp-stable-projection",
+  "version": "0.1.0",
+  "displayName": "Stable Projection for URP",
+  "description": "Compensated vertex projection and motion vectors for large-coordinate URP worlds. Includes a checked version-aware installer, optional precise orthographic camera, and a reproducible demo.",
+  "unity": "2022.3",
+  "author": {
+    "name": "Void Logistics contributors",
+    "url": "https://github.com/rsklnkff"
+  },
+  "license": "See LICENSE.md",
+  "keywords": [
+    "urp",
+    "precision",
+    "rendering",
+    "large-world",
+    "jitter"
+  ],
+  "documentationUrl": "https://github.com/rsklnkff/urp-stable-projection/blob/v0.1.0/README.md",
+  "changelogUrl": "https://github.com/rsklnkff/urp-stable-projection/blob/v0.1.0/CHANGELOG.md",
+  "licensesUrl": "https://github.com/rsklnkff/urp-stable-projection/blob/v0.1.0/LICENSE.md"
+}
